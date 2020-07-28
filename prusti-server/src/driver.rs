@@ -23,7 +23,6 @@ fn main() {
                 .short("p")
                 .long("port")
                 .help("Sets the port on which to listen for incoming verification requests. Pass 0 to get a free one assigned by the OS.")
-                .required(true)
                 .takes_value(true)
                 .value_name("PORT"),
         )
@@ -31,9 +30,7 @@ fn main() {
 
     let port = matches
         .value_of("port")
-        .unwrap()
-        .parse()
-        .expect("Invalid port provided");
+        .map_or(0, |raw| raw.parse().expect("Invalid port provided"));
 
     let service = ServerSideService::new();
     service.listen_on_port(port);
