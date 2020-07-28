@@ -16,12 +16,10 @@ fn main() {
 }
 
 fn process(args: Vec<String>) -> Result<(), i32> {
-    let mut prusti_driver_path = std::env::current_exe()
+    let prusti_driver_path = std::env::current_exe()
         .expect("current executable path invalid")
-        .with_file_name("prusti-driver");
-    if cfg!(windows) {
-        prusti_driver_path.set_extension("exe");
-    }
+        .with_file_name("prusti-driver")
+        .with_extension(env::consts::EXE_EXTENSION);
 
     let java_home = match env::var("JAVA_HOME") {
         Ok(java_home) => PathBuf::from(java_home),

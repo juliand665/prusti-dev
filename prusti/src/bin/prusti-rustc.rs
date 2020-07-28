@@ -1,14 +1,14 @@
 use prusti_env_utils::{add_to_loader_path, get_latest_crate_artefact, prusti_sysroot};
-use std::env;
-use std::process::{Command, Stdio};
+use std::{
+    env,
+    process::{Command, Stdio},
+};
 
 fn process(mut args: Vec<String>) -> Result<(), i32> {
-    let mut prusti_driver_path = std::env::current_exe()
+    let prusti_driver_path = std::env::current_exe()
         .expect("current executable path invalid")
-        .with_file_name("prusti-driver");
-    if cfg!(windows) {
-        prusti_driver_path.set_extension("exe");
-    }
+        .with_file_name("prusti-driver")
+        .with_extension(env::consts::EXE_EXTENSION);
 
     let prusti_sysroot =
         prusti_sysroot().expect(&format!("Failed to find Rust's sysroot for Prusti"));
