@@ -5,24 +5,27 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use self::path_ctxt::*;
-use crate::encoder::foldunfold::action::Action;
-use crate::encoder::foldunfold::perm::*;
-use crate::encoder::foldunfold::permissions::*;
-use crate::encoder::foldunfold::semantics::ApplyOnState;
-use crate::encoder::Encoder;
-use prusti_common::utils::to_string::ToString;
-use prusti_common::vir;
-use prusti_common::vir::borrows::Borrow;
-use prusti_common::vir::{CfgBlockIndex, CfgReplacer, CheckNoOpAction};
-use prusti_common::vir::{ExprFolder, FallibleExprFolder, PermAmount};
-use prusti_common::config;
-use prusti_common::report;
+use crate::encoder::{
+    foldunfold::{action::Action, perm::*, permissions::*, semantics::ApplyOnState},
+    Encoder,
+};
+use ::log::{debug, trace};
+use prusti_common::{
+    config, report,
+    utils::to_string::ToString,
+    vir,
+    vir::{
+        borrows::Borrow, CfgBlockIndex, CfgReplacer, CheckNoOpAction, ExprFolder,
+        FallibleExprFolder, PermAmount,
+    },
+};
 use rustc_middle::mir;
-use std;
-use std::collections::{HashMap, HashSet};
-use std::mem;
-use std::ops::Deref;
-use ::log::{trace, debug};
+use std::{
+    self,
+    collections::{HashMap, HashSet},
+    mem,
+    ops::Deref,
+};
 
 mod action;
 mod borrows;
@@ -396,7 +399,7 @@ impl<'p, 'v: 'p, 'tcx: 'v> FoldUnfold<'p, 'v, 'tcx> {
                     if !action.is_empty() {
                         //let stmts_to_add = action.iter().map(|a| a.to_stmt()).collect();
                         let mut stmts_to_add = Vec::new();
-                        for a in &action.0 {
+                        for a in action {
                             stmts_to_add.push(a.to_stmt());
                             if let Action::Drop(perm, missing_perm) = a {
                                 if dag.in_borrowed_places(missing_perm.get_place())
@@ -551,7 +554,7 @@ impl<'p, 'v: 'p, 'tcx: 'v> FoldUnfold<'p, 'v, 'tcx> {
             stmts.push(vir::Stmt::If(
                 block.guard.clone(),
                 self.patch_places(&block.statements, label),
-                vec![]
+                vec![],
             ));
             for ((from, to), statements) in &cfg.edges {
                 if *from == i {
@@ -562,7 +565,7 @@ impl<'p, 'v: 'p, 'tcx: 'v> FoldUnfold<'p, 'v, 'tcx> {
                     stmts.push(vir::Stmt::If(
                         condition,
                         self.patch_places(statements, label),
-                        vec![]
+                        vec![],
                     ));
                 }
             }
@@ -688,25 +691,7 @@ impl<'p, 'v: 'p, 'tcx: 'v> FoldUnfold<'p, 'v, 'tcx> {
     }
 }
 
-#[derive(Debug)]
-struct ActionVec(pub Vec<Action>);
-
-impl Deref for ActionVec {
-    type Target = Vec<Action>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-// TODO: get rid of newtype wrapper when rust updated to 1.41.0+, where the orphan rules are relaxed to allow things like this
-impl CheckNoOpAction for ActionVec {
-    fn is_noop(&self) -> bool {
-        self.is_empty()
-    }
-}
-
-impl<'p, 'v: 'p, 'tcx: 'v> vir::CfgReplacer<PathCtxt<'p>, ActionVec>
+impl<'p, 'v: 'p, 'tcx: 'v> vir::CfgReplacer<PathCtxt<'p>, Vec<Action>>
     for FoldUnfold<'p, 'v, 'tcx>
 {
     type Error = FoldUnfoldError;
@@ -975,30 +960,56 @@ impl<'p, 'v: 'p, 'tcx: 'v> vir::CfgReplacer<PathCtxt<'p>, ActionVec>
         stmt = match stmt {
             vir::Stmt::If(cond, then_stmts, else_stmts) => {
                 let mut then_pctxt = pctxt.clone();
-                let mut then_stmts = then_stmts.into_iter()
-                    .map(|stmt| self.replace_stmt(
-                        stmt_index, &stmt, false, &mut then_pctxt, curr_block_index, new_cfg, None
-                    ))
+                let mut then_stmts = then_stmts
+                    .into_iter()
+                    .map(|stmt| {
+                        self.replace_stmt(
+                            stmt_index,
+                            &stmt,
+                            false,
+                            &mut then_pctxt,
+                            curr_block_index,
+                            new_cfg,
+                            None,
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()?
-                    .into_iter().flatten()
+                    .into_iter()
+                    .flatten()
                     .collect::<Vec<_>>();
                 let mut else_pctxt = pctxt.clone();
-                let mut else_stmts = else_stmts.into_iter()
-                    .map(|stmt| self.replace_stmt(
-                        stmt_index, &stmt, false, &mut else_pctxt, curr_block_index, new_cfg, None
-                    ))
+                let mut else_stmts = else_stmts
+                    .into_iter()
+                    .map(|stmt| {
+                        self.replace_stmt(
+                            stmt_index,
+                            &stmt,
+                            false,
+                            &mut else_pctxt,
+                            curr_block_index,
+                            new_cfg,
+                            None,
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()?
-                    .into_iter().flatten()
+                    .into_iter()
+                    .flatten()
                     .collect::<Vec<_>>();
-                let (mut join_actions, mut joined_pctxt) = self.prepend_join(
-                    vec![&then_pctxt, &else_pctxt])?;
+                let (mut join_actions, mut joined_pctxt) =
+                    self.prepend_join(vec![&then_pctxt, &else_pctxt])?;
                 else_stmts.extend(self.perform_prejoin_action(
-                    &mut joined_pctxt, curr_block_index, join_actions.remove(1))?);
+                    &mut joined_pctxt,
+                    curr_block_index,
+                    join_actions.remove(1),
+                )?);
                 then_stmts.extend(self.perform_prejoin_action(
-                    &mut joined_pctxt, curr_block_index, join_actions.remove(0))?);
+                    &mut joined_pctxt,
+                    curr_block_index,
+                    join_actions.remove(0),
+                )?);
                 *pctxt = joined_pctxt;
                 vir::Stmt::If(cond, then_stmts, else_stmts)
-            },
+            }
             _ => {
                 pctxt.apply_stmt(&stmt);
                 stmt
@@ -1265,11 +1276,11 @@ impl<'p, 'v: 'p, 'tcx: 'v> vir::CfgReplacer<PathCtxt<'p>, ActionVec>
     fn prepend_join(
         &mut self,
         bcs: Vec<&PathCtxt<'p>>,
-    ) -> Result<(Vec<ActionVec>, PathCtxt<'p>), Self::Error> {
+    ) -> Result<(Vec<Vec<Action>>, PathCtxt<'p>), Self::Error> {
         trace!("[enter] prepend_join(..{})", &bcs.len());
         assert!(bcs.len() > 0);
         if bcs.len() == 1 {
-            Ok((vec![ActionVec(vec![])], bcs[0].clone()))
+            Ok((vec![vec![]], bcs[0].clone()))
         } else {
             // Define two subgroups
             let mid = bcs.len() / 2;
@@ -1284,13 +1295,13 @@ impl<'p, 'v: 'p, 'tcx: 'v> vir::CfgReplacer<PathCtxt<'p>, ActionVec>
             let (merge_actions_left, merge_actions_right) = left_pctxt.join(right_pctxt)?;
             let merged_pctxt = left_pctxt;
 
-            let mut branch_actions_vec: Vec<ActionVec> = vec![];
+            let mut branch_actions_vec: Vec<Vec<Action>> = vec![];
             for mut left_actions in left_actions_vec {
-                left_actions.0.extend(merge_actions_left.iter().cloned());
+                left_actions.extend(merge_actions_left.iter().cloned());
                 branch_actions_vec.push(left_actions);
             }
             for mut right_actions in right_actions_vec {
-                right_actions.0.extend(merge_actions_right.iter().cloned());
+                right_actions.extend(merge_actions_right.iter().cloned());
                 branch_actions_vec.push(right_actions);
             }
 
@@ -1311,10 +1322,10 @@ impl<'p, 'v: 'p, 'tcx: 'v> vir::CfgReplacer<PathCtxt<'p>, ActionVec>
         &mut self,
         pctxt: &mut PathCtxt,
         block_index: CfgBlockIndex,
-        actions: ActionVec,
+        actions: Vec<Action>,
     ) -> Result<Vec<vir::Stmt>, Self::Error> {
         let mut stmts = Vec::new();
-        for action in actions.0 {
+        for action in actions {
             stmts.push(action.to_stmt());
             pctxt.log_mut().log_prejoin_action(block_index, action);
         }
